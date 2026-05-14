@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netbox-live-log"
+version = "0.1.0"
+description = "Live log tailing for NetBox custom scripts via Server-Sent Events."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+    { name = "Sol1" }
+]
+keywords = ["netbox", "netbox-plugin", "sse", "logging"]
+classifiers = [
+    "Framework :: Django",
+    "Framework :: Django :: 5.0",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "redis>=5.0",
+    "django-rq>=2.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-django>=4.8",
+]
+
+[project.urls]
+Homepage = "https://github.com/ryanlovett-au/netbox-live-log"
+Issues = "https://github.com/ryanlovett-au/netbox-live-log/issues"
+
+[tool.setuptools.packages.find]
+include = ["netbox_live_log*"]
+exclude = ["example_scripts*", "tests*"]
+
+[tool.setuptools.package-data]
+netbox_live_log = ["templates/netbox_live_log/*.html"]

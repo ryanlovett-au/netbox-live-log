@@ -1,0 +1,120 @@
+{% load static %}
+<script type="text/javascript">
+(function () {
+    "use strict";
+
+    // Extract the job ID from URLs like /extras/scripts/results/<uuid>/ or
+    // /extras/script-results/<id>/. Bail out if we're not on a results page.
+    const path = window.location.pathname;
+    const match = path.match(/\/extras\/(?:scripts\/results|script-results)\/([^\/]+)\/?/);
+    if (!match) {
+        return;
+    }
+    const jobId = match[1];
+
+    const logTable = document.getElementById("script-log");
+    if (!logTable) {
+        return;
+    }
+    const tbody = logTable.tBodies[0] || logTable.appendChild(document.createElement("tbody"));
+
+    // Find a scrollable ancestor of the log table so we can keep it pinned
+    // to the most recent entry.
+    function findScrollContainer(node) {
+        let el = node;
+        while (el && el !== document.body) {
+            const style = window.getComputedStyle(el);
+            if (/(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight) {
+                return el;
+            }
+            el = el.parentElement;
+        }
+        return null;
+    }
+    const scrollContainer = findScrollContainer(logTable);
+
+    const LEVEL_META = {
+        debug:   { badge: "text-bg-secondary", icon: "mdi-message-outline",          label: "Debug" },
+        info:    { badge: "text-bg-info",      icon: "mdi-information-outline",      label: "Info" },
+        success: { badge: "text-bg-success",   icon: "mdi-check-circle-outline",     label: "Success" },
+        warning: { badge: "text-bg-warning",   icon: "mdi-alert-outline",            label: "Warning" },
+        failure: { badge: "text-bg-danger",    icon: "mdi-close-circle-outline",     label: "Failure" }
+    };
+
+    let rowIndex = tbody.rows.length;
+
+    function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, function (ch) {
+            return ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                "\"": "&quot;",
+                "'": "&#39;"
+            })[ch];
+        });
+    }
+
+    function appendRow(entry) {
+        const level = (entry.level || "info").toLowerCase();
+        const meta = LEVEL_META[level] || LEVEL_META.info;
+        rowIndex += 1;
+
+        const tr = document.createElement("tr");
+        tr.className = "script-log-entry";
+        tr.innerHTML =
+            '<th scope="row">' + rowIndex + '</th>' +
+            '<td><i class="mdi ' + meta.icon + '"></i></td>' +
+            '<td><span class="badge ' + meta.badge + '">' + meta.label + '</span></td>' +
+            '<td>' + escapeHtml(entry.message || "") + '</td>';
+        tbody.appendChild(tr);
+
+        if (scrollContainer) {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        } else {
+            tr.scrollIntoView({ block: "end" });
+        }
+    }
+
+    const streamUrl = "/plugins/live-log/stream/" + encodeURIComponent(jobId) + "/";
+    let source;
+    try {
+        source = new EventSource(streamUrl);
+    } catch (err) {
+        return;
+    }
+
+    source.onmessage = function (event) {
+        let data;
+        try {
+            data = JSON.parse(event.data);
+        } catch (e) {
+            return;
+        }
+        if (!data || typeof data !== "object") {
+            return;
+        }
+        if (data.status === "done" || data.status === "timeout") {
+            source.close();
+            return;
+        }
+        if (data.status === "connected" || data.status === "error") {
+            return;
+        }
+        if (typeof data.message === "string") {
+            appendRow(data);
+        }
+    };
+
+    source.onerror = function () {
+        if (source.readyState === EventSource.CLOSED) {
+            return;
+        }
+        source.close();
+    };
+
+    window.addEventListener("beforeunload", function () {
+        try { source.close(); } catch (e) { /* ignore */ }
+    });
+})();
+</script>
