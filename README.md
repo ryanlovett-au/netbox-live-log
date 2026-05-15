@@ -3,9 +3,13 @@
 A NetBox 4.5 plugin that streams **live log output** from custom scripts to
 the results page as they run. Script authors call `self.log_live(...)` and
 each entry appears in a **Live Log** card on the results page within a
-second or two — no page refresh, no waiting for the job to finish. The
-card mirrors NetBox's native Log table styling (Line / Time / Level /
-Object / Message columns).
+second or two — no page refresh, no waiting for the job to finish.
+
+The Live Log card is a visual twin of NetBox's native Log table: same
+columns (Line / Time / Level / Object / Message), same badge palette
+(teal / cyan / green / yellow / red), same fonts and zebra striping.
+The page's **Log threshold** dropdown applies to it too — switch to
+Warning and Debug/Info/Success rows hide just like in the native log.
 
 No extra infrastructure required: it reuses NetBox's existing Redis
 (via `django-rq`) and ships log entries to the browser over Server-Sent
@@ -194,6 +198,10 @@ Or wrap it in a small helper on your script class.
 - **HTMX-safe.** The Live Log card is mounted as a sibling above the
   native Log card, outside the HTMX-polled `<div hx-get>` region — HTMX's
   every-5-second wholesale swaps don't touch it.
+- **Threshold-aware.** Reads `?log_threshold=` (and any threshold
+  `<select>` on the page) and hides streamed rows whose severity is
+  below the cutoff. Hidden rows stay in the DOM, so raising the
+  threshold dropdown to Debug re-reveals them without reconnecting.
 - **Bounded streams.** Each SSE connection auto-terminates after
   `sse_max_duration_seconds` (default 30 minutes).
 - **Bounded keys.** Each Redis list gets its TTL refreshed (default 1 hour)
