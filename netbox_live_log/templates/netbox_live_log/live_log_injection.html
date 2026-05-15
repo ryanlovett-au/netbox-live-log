@@ -21,6 +21,42 @@
         failure: { badge: "text-bg-red",    label: "Failure" }
     };
 
+    // Severity ordering for threshold filtering, matching
+    // extras.choices.LogLevelChoices.SYSTEM_LEVELS (success == info).
+    const LEVEL_ORDER = {
+        debug:   10,
+        info:    20,
+        success: 20,
+        warning: 30,
+        failure: 40
+    };
+
+    function getCurrentThreshold() {
+        // 1. URL query param (NetBox's threshold dropdown sets ?log_threshold=).
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const v = (params.get("log_threshold") || "").toLowerCase();
+            if (v in LEVEL_ORDER) {
+                return v;
+            }
+        } catch (e) { /* ignore */ }
+
+        // 2. A <select> on the page (some NetBox versions render it that way).
+        const select = document.querySelector(
+            'select[name="log_threshold"], select#log_threshold, ' +
+            'select[name*="threshold" i], select[id*="threshold" i]'
+        );
+        if (select && select.value) {
+            const v = String(select.value).toLowerCase();
+            if (v in LEVEL_ORDER) {
+                return v;
+            }
+        }
+
+        // NetBox's default — see extras/views.py.
+        return "info";
+    }
+
     function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, function (ch) {
             return ({
@@ -158,6 +194,15 @@
             statusEl.className = "badge " + cls;
         }
 
+        function applyThreshold() {
+            const cutoff = LEVEL_ORDER[getCurrentThreshold()] || 20;
+            const rows = tbody.querySelectorAll("tr[data-level]");
+            for (let i = 0; i < rows.length; i++) {
+                const lvl = LEVEL_ORDER[rows[i].dataset.level] || 20;
+                rows[i].style.display = lvl < cutoff ? "none" : "";
+            }
+        }
+
         let rowIndex = 0;
         function appendRow(entry) {
             const level = (entry.level || "info").toLowerCase();
@@ -169,12 +214,20 @@
             // django-tables2 zebra-stripes rows with even/odd classes;
             // the native log uses these, so match for visual parity.
             tr.className = rowIndex % 2 === 0 ? "even" : "odd";
+            tr.dataset.level = level;
             tr.innerHTML =
                 '<td>' + rowIndex + '</td>' +
                 '<td>' + escapeHtml(ts) + '</td>' +
                 '<td><label class="badge ' + meta.badge + '">' + meta.label + '</label></td>' +
                 '<td>&mdash;</td>' +
                 '<td>' + escapeHtml(entry.message || "") + '</td>';
+            // Respect the user's current Log threshold — hide rows whose
+            // severity is below the threshold. They stay in the DOM (so
+            // a later threshold change can re-reveal them).
+            const cutoff = LEVEL_ORDER[getCurrentThreshold()] || 20;
+            if ((LEVEL_ORDER[level] || 20) < cutoff) {
+                tr.style.display = "none";
+            }
             tbody.appendChild(tr);
 
             if (empty && empty.parentNode) {
@@ -182,6 +235,19 @@
             }
             scrollEl.scrollTop = scrollEl.scrollHeight;
         }
+
+        // React to threshold-dropdown changes (covers both <select> and
+        // some link-style dropdowns that fire change/click on the page).
+        const thresholdSelect = document.querySelector(
+            'select[name="log_threshold"], select#log_threshold, ' +
+            'select[name*="threshold" i], select[id*="threshold" i]'
+        );
+        if (thresholdSelect) {
+            thresholdSelect.addEventListener("change", applyThreshold);
+        }
+        // If NetBox uses a link-list dropdown, threshold changes navigate
+        // (full page reload) and our JS re-runs from scratch — nothing
+        // extra to wire up for that path.
 
         const streamUrl = "/plugins/live-log/stream/" + encodeURIComponent(jobId) + "/";
         let source;
