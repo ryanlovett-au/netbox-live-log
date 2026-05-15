@@ -41,14 +41,51 @@
 
         // Pick a stable insertion point. NetBox 4.5's script results page
         // wraps its log/output in a <div hx-get="..." hx-trigger="every 5s">
-        // and lets HTMX replace its innerHTML every poll. Anything we insert
-        // INSIDE that div (or inside the .htmx-container it renders) gets
-        // wiped. We anchor on the polling div itself and insert as a sibling
-        // BEFORE it, so HTMX never sees us.
-        const pollingHost = document.querySelector("[hx-get]");
-        const fallback = document.querySelector("main, .content-container, .container-fluid, body");
-        const anchor = pollingHost || fallback;
-        if (!anchor || !anchor.parentNode) {
+        // whose innerHTML is wholesale replaced on every poll, so we mustn't
+        // insert inside it. But NetBox also uses HTMX in the navbar/search,
+        // so a bare [hx-get] selector grabs the wrong element.
+        //
+        // Strategy, in order of preference:
+        //   1. Insert immediately before the existing "Log" card (the most
+        //      semantic spot — directly above the log we're mirroring).
+        //   2. Insert before the script-results polling div, matched by its
+        //      hx-get URL pattern.
+        //   3. Prepend to <main> as a last resort.
+        function findAnchor() {
+            // 1. Existing Log card, found by its card-header text.
+            const headers = document.querySelectorAll(".card-header, h4, h5, h6");
+            for (let i = 0; i < headers.length; i++) {
+                const text = (headers[i].textContent || "").trim().toLowerCase();
+                if (text === "log") {
+                    const card = headers[i].closest(".card");
+                    if (card && card.parentNode) {
+                        return { node: card, mode: "before" };
+                    }
+                }
+            }
+            // 2. Script-results polling div, matched by URL fragment.
+            const selectors = [
+                '[hx-get*="script-result"]',
+                '[hx-get*="script_result"]',
+                '[hx-get*="scripts/results"]',
+                '[hx-get*="script-results"]'
+            ];
+            for (let i = 0; i < selectors.length; i++) {
+                const node = document.querySelector(selectors[i]);
+                if (node && node.parentNode) {
+                    return { node: node, mode: "before" };
+                }
+            }
+            // 3. Prepend to a content container.
+            const main = document.querySelector("main, .content-container, .container-fluid");
+            if (main) {
+                return { node: main, mode: "prepend" };
+            }
+            return null;
+        }
+
+        const anchor = findAnchor();
+        if (!anchor) {
             return;
         }
 
@@ -78,13 +115,12 @@
                 'Waiting for the script to produce output&hellip;' +
             '</div>';
 
-        if (pollingHost) {
-            // Sibling-before the HTMX-polled element — outside its swap area.
-            pollingHost.parentNode.insertBefore(card, pollingHost);
+        if (anchor.mode === "before") {
+            anchor.node.parentNode.insertBefore(card, anchor.node);
+        } else if (anchor.mode === "prepend") {
+            anchor.node.insertBefore(card, anchor.node.firstChild);
         } else {
-            // No polling host on the page (e.g. completed jobs don't poll);
-            // fall back to mounting at the top of the main content.
-            anchor.insertBefore(card, anchor.firstChild);
+            anchor.node.appendChild(card);
         }
 
         const tbody = card.querySelector("#netbox-live-log-body");
