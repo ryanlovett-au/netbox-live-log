@@ -39,13 +39,16 @@
         }
         const jobId = match[1];
 
-        // Pick a stable insertion point. The script results page wraps its
-        // log/output in a <div class="htmx-container"> that gets swapped
-        // wholesale every few seconds while the job runs — we must mount our
-        // card OUTSIDE that container so HTMX doesn't wipe it.
-        const htmxContainer = document.querySelector(".htmx-container");
-        const anchor = htmxContainer || document.querySelector("main, .content-container, .container-fluid, body");
-        if (!anchor) {
+        // Pick a stable insertion point. NetBox 4.5's script results page
+        // wraps its log/output in a <div hx-get="..." hx-trigger="every 5s">
+        // and lets HTMX replace its innerHTML every poll. Anything we insert
+        // INSIDE that div (or inside the .htmx-container it renders) gets
+        // wiped. We anchor on the polling div itself and insert as a sibling
+        // BEFORE it, so HTMX never sees us.
+        const pollingHost = document.querySelector("[hx-get]");
+        const fallback = document.querySelector("main, .content-container, .container-fluid, body");
+        const anchor = pollingHost || fallback;
+        if (!anchor || !anchor.parentNode) {
             return;
         }
 
@@ -75,9 +78,12 @@
                 'Waiting for the script to produce output&hellip;' +
             '</div>';
 
-        if (htmxContainer && htmxContainer.parentNode) {
-            htmxContainer.parentNode.insertBefore(card, htmxContainer);
+        if (pollingHost) {
+            // Sibling-before the HTMX-polled element — outside its swap area.
+            pollingHost.parentNode.insertBefore(card, pollingHost);
         } else {
+            // No polling host on the page (e.g. completed jobs don't poll);
+            // fall back to mounting at the top of the main content.
             anchor.insertBefore(card, anchor.firstChild);
         }
 
