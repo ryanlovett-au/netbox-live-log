@@ -5,7 +5,7 @@ class NetBoxLiveLogConfig(PluginConfig):
     name = "netbox_live_log"
     verbose_name = "NetBox Live Log"
     description = "Live log tailing for custom script output via Server-Sent Events."
-    version = "0.1.1"
+    version = "0.1.2"
     author = "Sol1"
     base_url = "live-log"
     min_version = "4.5.0"

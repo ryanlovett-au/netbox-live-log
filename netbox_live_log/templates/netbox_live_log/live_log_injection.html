@@ -1,55 +1,21 @@
-{% load static %}
 <script type="text/javascript">
 (function () {
     "use strict";
 
-    // Guard against double-injection — multiple PluginTemplateExtensions may
-    // fire on the same page if NetBox renders hooks for several models.
+    // Guard against double-injection if the plugin is loaded twice for any
+    // reason (multiple PluginTemplateExtension subclasses, etc.).
     if (window.__netbox_live_log_loaded) {
         return;
     }
     window.__netbox_live_log_loaded = true;
 
-    // Extract the job ID from URLs like /extras/scripts/results/<id>/ or
-    // /extras/script-results/<id>/. The id can be either an integer PK or a
-    // UUID — the SSE view accepts either. Bail out if not on a results page.
-    const path = window.location.pathname;
-    const match = path.match(/\/extras\/(?:scripts\/results|script-results)\/([^\/]+)\/?/);
-    if (!match) {
-        return;
-    }
-    const jobId = match[1];
-
-    const logTable = document.getElementById("script-log");
-    if (!logTable) {
-        return;
-    }
-    const tbody = logTable.tBodies[0] || logTable.appendChild(document.createElement("tbody"));
-
-    // Find a scrollable ancestor of the log table so we can keep it pinned
-    // to the most recent entry.
-    function findScrollContainer(node) {
-        let el = node;
-        while (el && el !== document.body) {
-            const style = window.getComputedStyle(el);
-            if (/(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight) {
-                return el;
-            }
-            el = el.parentElement;
-        }
-        return null;
-    }
-    const scrollContainer = findScrollContainer(logTable);
-
     const LEVEL_META = {
-        debug:   { badge: "text-bg-secondary", icon: "mdi-message-outline",          label: "Debug" },
-        info:    { badge: "text-bg-info",      icon: "mdi-information-outline",      label: "Info" },
-        success: { badge: "text-bg-success",   icon: "mdi-check-circle-outline",     label: "Success" },
-        warning: { badge: "text-bg-warning",   icon: "mdi-alert-outline",            label: "Warning" },
-        failure: { badge: "text-bg-danger",    icon: "mdi-close-circle-outline",     label: "Failure" }
+        debug:   { badge: "text-bg-secondary", icon: "mdi-message-outline",      label: "Debug" },
+        info:    { badge: "text-bg-info",      icon: "mdi-information-outline",  label: "Info" },
+        success: { badge: "text-bg-success",   icon: "mdi-check-circle-outline", label: "Success" },
+        warning: { badge: "text-bg-warning",   icon: "mdi-alert-outline",        label: "Warning" },
+        failure: { badge: "text-bg-danger",    icon: "mdi-close-circle-outline", label: "Failure" }
     };
-
-    let rowIndex = tbody.rows.length;
 
     function escapeHtml(value) {
         return String(value).replace(/[&<>"']/g, function (ch) {
@@ -63,66 +29,148 @@
         });
     }
 
-    function appendRow(entry) {
-        const level = (entry.level || "info").toLowerCase();
-        const meta = LEVEL_META[level] || LEVEL_META.info;
-        rowIndex += 1;
+    function init() {
+        // URL guard — only run on a script results page. The id segment can
+        // be either an integer PK or a UUID; the SSE view accepts either.
+        const path = window.location.pathname;
+        const match = path.match(/\/extras\/(?:scripts\/results|script-results)\/([^\/]+)\/?/);
+        if (!match) {
+            return;
+        }
+        const jobId = match[1];
 
-        const tr = document.createElement("tr");
-        tr.className = "script-log-entry";
-        tr.innerHTML =
-            '<th scope="row">' + rowIndex + '</th>' +
-            '<td><i class="mdi ' + meta.icon + '"></i></td>' +
-            '<td><span class="badge ' + meta.badge + '">' + meta.label + '</span></td>' +
-            '<td>' + escapeHtml(entry.message || "") + '</td>';
-        tbody.appendChild(tr);
+        // Pick a stable insertion point. The script results page wraps its
+        // log/output in a <div class="htmx-container"> that gets swapped
+        // wholesale every few seconds while the job runs — we must mount our
+        // card OUTSIDE that container so HTMX doesn't wipe it.
+        const htmxContainer = document.querySelector(".htmx-container");
+        const anchor = htmxContainer || document.querySelector("main, .content-container, .container-fluid, body");
+        if (!anchor) {
+            return;
+        }
 
-        if (scrollContainer) {
-            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        // Build the live-log card.
+        const card = document.createElement("div");
+        card.id = "netbox-live-log-card";
+        card.className = "card mb-3";
+        card.innerHTML =
+            '<h5 class="card-header d-flex align-items-center justify-content-between mb-0">' +
+                '<span><i class="mdi mdi-broadcast me-1"></i>Live Log</span>' +
+                '<span id="netbox-live-log-status" class="badge text-bg-secondary">Connecting&hellip;</span>' +
+            '</h5>' +
+            '<div id="netbox-live-log-scroll" class="table-responsive" style="max-height: 400px; overflow-y: auto;">' +
+                '<table class="table table-hover table-sm mb-0">' +
+                    '<thead>' +
+                        '<tr>' +
+                            '<th scope="col" style="width: 4rem;">#</th>' +
+                            '<th scope="col" style="width: 2rem;"></th>' +
+                            '<th scope="col" style="width: 8rem;">Level</th>' +
+                            '<th scope="col">Message</th>' +
+                        '</tr>' +
+                    '</thead>' +
+                    '<tbody id="netbox-live-log-body"></tbody>' +
+                '</table>' +
+            '</div>' +
+            '<div id="netbox-live-log-empty" class="card-body text-muted small">' +
+                'Waiting for the script to produce output&hellip;' +
+            '</div>';
+
+        if (htmxContainer && htmxContainer.parentNode) {
+            htmxContainer.parentNode.insertBefore(card, htmxContainer);
         } else {
-            tr.scrollIntoView({ block: "end" });
+            anchor.insertBefore(card, anchor.firstChild);
         }
-    }
 
-    const streamUrl = "/plugins/live-log/stream/" + encodeURIComponent(jobId) + "/";
-    let source;
-    try {
-        source = new EventSource(streamUrl);
-    } catch (err) {
-        return;
-    }
+        const tbody = card.querySelector("#netbox-live-log-body");
+        const empty = card.querySelector("#netbox-live-log-empty");
+        const statusEl = card.querySelector("#netbox-live-log-status");
+        const scrollEl = card.querySelector("#netbox-live-log-scroll");
 
-    source.onmessage = function (event) {
-        let data;
+        function setStatus(text, cls) {
+            statusEl.textContent = text;
+            statusEl.className = "badge " + cls;
+        }
+
+        let rowIndex = 0;
+        function appendRow(entry) {
+            const level = (entry.level || "info").toLowerCase();
+            const meta = LEVEL_META[level] || LEVEL_META.info;
+            rowIndex += 1;
+
+            const tr = document.createElement("tr");
+            tr.className = "script-log-entry";
+            tr.innerHTML =
+                '<th scope="row">' + rowIndex + '</th>' +
+                '<td><i class="mdi ' + meta.icon + '"></i></td>' +
+                '<td><span class="badge ' + meta.badge + '">' + meta.label + '</span></td>' +
+                '<td>' + escapeHtml(entry.message || "") + '</td>';
+            tbody.appendChild(tr);
+
+            if (empty && empty.parentNode) {
+                empty.parentNode.removeChild(empty);
+            }
+            scrollEl.scrollTop = scrollEl.scrollHeight;
+        }
+
+        const streamUrl = "/plugins/live-log/stream/" + encodeURIComponent(jobId) + "/";
+        let source;
         try {
-            data = JSON.parse(event.data);
-        } catch (e) {
+            source = new EventSource(streamUrl);
+        } catch (err) {
+            setStatus("Unavailable", "text-bg-danger");
             return;
         }
-        if (!data || typeof data !== "object") {
-            return;
-        }
-        if (data.status === "done" || data.status === "timeout") {
+
+        source.onmessage = function (event) {
+            let data;
+            try {
+                data = JSON.parse(event.data);
+            } catch (e) {
+                return;
+            }
+            if (!data || typeof data !== "object") {
+                return;
+            }
+            if (data.status === "connected") {
+                setStatus("Streaming", "text-bg-success");
+                return;
+            }
+            if (data.status === "done") {
+                setStatus("Complete", "text-bg-secondary");
+                source.close();
+                return;
+            }
+            if (data.status === "timeout") {
+                setStatus("Timed out", "text-bg-warning");
+                source.close();
+                return;
+            }
+            if (data.status === "error") {
+                setStatus("Error", "text-bg-danger");
+                return;
+            }
+            if (typeof data.message === "string") {
+                appendRow(data);
+            }
+        };
+
+        source.onerror = function () {
+            if (source.readyState === EventSource.CLOSED) {
+                return;
+            }
+            setStatus("Disconnected", "text-bg-warning");
             source.close();
-            return;
-        }
-        if (data.status === "connected" || data.status === "error") {
-            return;
-        }
-        if (typeof data.message === "string") {
-            appendRow(data);
-        }
-    };
+        };
 
-    source.onerror = function () {
-        if (source.readyState === EventSource.CLOSED) {
-            return;
-        }
-        source.close();
-    };
+        window.addEventListener("beforeunload", function () {
+            try { source.close(); } catch (e) { /* ignore */ }
+        });
+    }
 
-    window.addEventListener("beforeunload", function () {
-        try { source.close(); } catch (e) { /* ignore */ }
-    });
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", init);
+    } else {
+        init();
+    }
 })();
 </script>
