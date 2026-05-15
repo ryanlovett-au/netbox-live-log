@@ -2,8 +2,10 @@
 
 A NetBox 4.5 plugin that streams **live log output** from custom scripts to
 the results page as they run. Script authors call `self.log_live(...)` and
-each entry appears in the existing `#script-log` table within a second or
-two — no page refresh, no waiting for the job to finish.
+each entry appears in a **Live Log** card on the results page within a
+second or two — no page refresh, no waiting for the job to finish. The
+card mirrors NetBox's native Log table styling (Line / Time / Level /
+Object / Message columns).
 
 No extra infrastructure required: it reuses NetBox's existing Redis
 (via `django-rq`) and ships log entries to the browser over Server-Sent
@@ -31,23 +33,31 @@ untouched.
         │
         │ RPUSH (JSON)
         ▼
-  Redis list  netbox_live_log:<job_id>
+  Redis list  netbox_live_log:<Job.job_id>
         │
         │ BLPOP (2s)
         ▼
-  SSE view  /plugins/live-log/stream/<job_id>/
+  SSE view  /plugins/live-log/stream/<pk-or-uuid>/
         │
         │ text/event-stream
         ▼
-  EventSource injected into extras/script.html
+  EventSource opened by JS injected via plugin_head
         │
         ▼
-  Rows appended to #script-log, autoscrolled
+  Rows appended to a dedicated "Live Log" card,
+  mounted above the native Log card on the results page
 ```
 
+The JS is injected via NetBox's `head()` plugin hook on every page, but
+a server-side path regex returns an empty string on every page except
+`/extras/scripts/results/<id>/` — so unrelated pages get no markup and
+no JS parse cost.
+
 When `run()` returns (or raises), the mixin pushes a `{"status": "done"}`
-sentinel in a `finally` block, the SSE view sees it and closes the stream
-cleanly.
+sentinel into Redis; the SSE view sees it and closes the stream cleanly.
+The mixin uses `__init_subclass__` to wrap your script's `run()` method,
+so the sentinel fires reliably regardless of how the subclass overrides
+`run()`.
 
 ## Requirements
 
@@ -64,23 +74,30 @@ cleanly.
 
 ```bash
 source /opt/netbox/venv/bin/activate
-pip install git+https://github.com/ryanlovett-au/netbox-live-log.git@v0.1.0
+pip install git+https://github.com/ryanlovett-au/netbox-live-log.git@main
 ```
 
 For NetBox upgrades to keep the plugin installed, add it to
 `/opt/netbox/local_requirements.txt`:
 
 ```
-git+https://github.com/ryanlovett-au/netbox-live-log.git@v0.1.0
+git+https://github.com/ryanlovett-au/netbox-live-log.git@main
 ```
 
-`/opt/netbox/upgrade.sh` will reinstall it on every upgrade.
+`/opt/netbox/upgrade.sh` will reinstall it on every upgrade. Pin to a
+tag (e.g. `@v0.1.3`) for production rather than tracking `main`, so an
+unrelated upgrade run can't pull in an in-progress commit.
+
+> Some deployments use a release-managed layout (e.g.
+> `/srv/netbox/current/venv-py3/`) instead of `/opt/netbox/venv/`.
+> Activate whichever venv `uwsgi.ini` / your service file points at —
+> the path is whatever `which python` resolves to after activation.
 
 ### From a local checkout (development)
 
 ```bash
 source /opt/netbox/venv/bin/activate
-pip install -e /path/to/netbox-live-scripts
+pip install -e /path/to/netbox-live-log
 ```
 
 ### Enable in NetBox
@@ -110,6 +127,14 @@ PLUGINS_CONFIG = {
 
 ```bash
 sudo systemctl restart netbox netbox-rq
+```
+
+If your deployment uses a templated RQ worker unit
+(`netbox-rqworker@.service` with multiple instances) instead of the
+single `netbox-rq.service`, restart all of them too:
+
+```bash
+sudo systemctl restart netbox 'netbox-rqworker@*'
 ```
 
 No database migrations — the plugin has no models.
@@ -163,14 +188,22 @@ Or wrap it in a small helper on your script class.
 
 - **Failure-tolerant.** If Redis is unreachable, `log_live` silently no-ops.
   Scripts continue running normally; NetBox's standard logging is unaffected.
+- **Scoped injection.** The client JS is only emitted in the HTML of script
+  results pages (gated server-side by request path). Every other page in
+  NetBox gets no markup and no JS parse cost from this plugin.
+- **HTMX-safe.** The Live Log card is mounted as a sibling above the
+  native Log card, outside the HTMX-polled `<div hx-get>` region — HTMX's
+  every-5-second wholesale swaps don't touch it.
 - **Bounded streams.** Each SSE connection auto-terminates after
   `sse_max_duration_seconds` (default 30 minutes).
 - **Bounded keys.** Each Redis list gets its TTL refreshed (default 1 hour)
   on every write, so abandoned keys from a crashed worker eventually expire.
-- **Sentinel close.** The mixin pushes `{"status": "done"}` in a `finally`
-  block after `run()`, so the stream closes even on uncaught exceptions.
-- **Per-job isolation.** Keys are scoped by job ID, so concurrent scripts
-  don't see each other's output.
+- **Sentinel close.** A `{"status": "done"}` sentinel is pushed after
+  `run()` returns or raises (via `__init_subclass__` wrapping), so the
+  stream closes cleanly even on uncaught exceptions or `sys.exit()`.
+- **Per-job isolation.** Keys are scoped by `core.Job.job_id` (the same
+  UUID NetBox assigns to the RQ job), so concurrent scripts can't see
+  each other's output.
 
 ## Troubleshooting
 
@@ -195,12 +228,30 @@ redis-cli lrange netbox_live_log:<job_id> 0 -1
 # 4. The browser opened the SSE connection — DevTools → Network → filter "stream"
 ```
 
+**Live Log card appears but stays empty.**
+
+The most common cause is a Redis key mismatch — usually a bespoke
+mixin or older plugin pushing under a different identifier. To confirm
+the canonical job id the SSE view BLPOPs from, on the NetBox box:
+
+```bash
+cd /opt/netbox/netbox  # or /srv/netbox/current/netbox
+python manage.py shell -c "from core.models import Job; \
+  print(Job.objects.order_by('-pk').first().job_id)"
+```
+
+That UUID should match a key returned by
+`redis-cli --scan --pattern 'netbox_live_log:*'` while a script is
+running. If they don't match, the worker side isn't using the same id.
+
 **Stream connects but never closes.**
 
-Make sure `LiveLogMixin` comes **before** `Script` in the MRO — otherwise
-the wrapped `run()` doesn't fire and the sentinel never gets pushed. The
-stream will still terminate at `sse_max_duration_seconds`, but cleanly is
-better.
+The mixin's `__init_subclass__` wraps your `run()` to push the done
+sentinel in a `finally` block — so this should never happen. If it
+does, your subclass may be defining `run` in a way that bypasses the
+wrap (e.g. monkey-patching `cls.run` post-definition). The stream will
+still terminate at `sse_max_duration_seconds` (default 30 min) as a
+safety net.
 
 **Behind nginx / a reverse proxy.**
 
