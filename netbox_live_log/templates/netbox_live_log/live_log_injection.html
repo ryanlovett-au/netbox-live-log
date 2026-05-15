@@ -3,8 +3,16 @@
 (function () {
     "use strict";
 
-    // Extract the job ID from URLs like /extras/scripts/results/<uuid>/ or
-    // /extras/script-results/<id>/. Bail out if we're not on a results page.
+    // Guard against double-injection — multiple PluginTemplateExtensions may
+    // fire on the same page if NetBox renders hooks for several models.
+    if (window.__netbox_live_log_loaded) {
+        return;
+    }
+    window.__netbox_live_log_loaded = true;
+
+    // Extract the job ID from URLs like /extras/scripts/results/<id>/ or
+    // /extras/script-results/<id>/. The id can be either an integer PK or a
+    // UUID — the SSE view accepts either. Bail out if not on a results page.
     const path = window.location.pathname;
     const match = path.match(/\/extras\/(?:scripts\/results|script-results)\/([^\/]+)\/?/);
     if (!match) {

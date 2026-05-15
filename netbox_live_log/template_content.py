@@ -1,25 +1,36 @@
 from netbox.plugins import PluginTemplateExtension
 
 
-class ScriptLiveLogExtension(PluginTemplateExtension):
+class _LiveLogInject(PluginTemplateExtension):
+    """Common renderer used by every registration target."""
+
+    def _render(self):
+        return self.render("netbox_live_log/live_log_injection.html")
+
+    def full_width_page(self):
+        return self._render()
+
+    def right_page(self):
+        return self._render()
+
+
+# The script results page in NetBox 4.5 is rendered for a core.Job object,
+# not for extras.Script. Register against both so the injection fires
+# whichever template the running NetBox version actually invokes hooks on.
+class JobLiveLogExtension(_LiveLogInject):
+    models = ["core.job"]
+
+
+class ScriptLiveLogExtension(_LiveLogInject):
     models = ["extras.script"]
 
-    def buttons(self):
-        return ""
 
-    def full_width_page(self):
-        return self.render("netbox_live_log/live_log_injection.html")
+class ScriptModuleLiveLogExtension(_LiveLogInject):
+    models = ["extras.scriptmodule"]
 
 
-# NetBox 4.5 expects either `models = [...]` on the extension or a legacy
-# `model = "..."` attribute. The injection targets `extras/script.html`, so
-# we also expose a variant keyed on the legacy model name for compatibility
-# with older template-rendering paths.
-class ScriptLiveLogExtensionLegacy(PluginTemplateExtension):
-    model = "extras.script"
-
-    def full_width_page(self):
-        return self.render("netbox_live_log/live_log_injection.html")
-
-
-template_extensions = [ScriptLiveLogExtension, ScriptLiveLogExtensionLegacy]
+template_extensions = [
+    JobLiveLogExtension,
+    ScriptLiveLogExtension,
+    ScriptModuleLiveLogExtension,
+]
