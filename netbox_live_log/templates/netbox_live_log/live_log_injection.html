@@ -9,12 +9,14 @@
     }
     window.__netbox_live_log_loaded = true;
 
+    // Level → Bootstrap badge mapping, matching NetBox's
+    // JOB_LOG_ENTRY_LEVELS in core/choices.py.
     const LEVEL_META = {
-        debug:   { badge: "text-bg-secondary", icon: "mdi-message-outline",      label: "Debug" },
-        info:    { badge: "text-bg-info",      icon: "mdi-information-outline",  label: "Info" },
-        success: { badge: "text-bg-success",   icon: "mdi-check-circle-outline", label: "Success" },
-        warning: { badge: "text-bg-warning",   icon: "mdi-alert-outline",        label: "Warning" },
-        failure: { badge: "text-bg-danger",    icon: "mdi-close-circle-outline", label: "Failure" }
+        debug:   { badge: "text-bg-secondary", label: "Debug" },
+        info:    { badge: "text-bg-info",      label: "Info" },
+        success: { badge: "text-bg-success",   label: "Success" },
+        warning: { badge: "text-bg-warning",   label: "Warning" },
+        failure: { badge: "text-bg-danger",    label: "Failure" }
     };
 
     function escapeHtml(value) {
@@ -27,6 +29,23 @@
                 "'": "&#39;"
             })[ch];
         });
+    }
+
+    // Format a unix-epoch seconds float to match NetBox's DateTimeColumn
+    // output (timespec='milliseconds'): "YYYY-MM-DD HH:MM:SS.mmm".
+    function formatTimestamp(epoch) {
+        const d = new Date(epoch * 1000);
+        if (isNaN(d.getTime())) {
+            return "";
+        }
+        const pad = (n, w) => String(n).padStart(w || 2, "0");
+        return d.getFullYear() + "-" +
+               pad(d.getMonth() + 1) + "-" +
+               pad(d.getDate()) + " " +
+               pad(d.getHours()) + ":" +
+               pad(d.getMinutes()) + ":" +
+               pad(d.getSeconds()) + "." +
+               pad(d.getMilliseconds(), 3);
     }
 
     function init() {
@@ -93,18 +112,23 @@
         const card = document.createElement("div");
         card.id = "netbox-live-log-card";
         card.className = "card mb-3";
+        // Match the structure of NetBox's native Log card (extras/script_result):
+        //  - <h5 class="card-header">  Log  </h5>
+        //  - <table class="table table-hover object-list">
+        //  - columns: Line / Time / Level / Object / Message
         card.innerHTML =
-            '<h5 class="card-header d-flex align-items-center justify-content-between mb-0">' +
+            '<h5 class="card-header d-flex align-items-center justify-content-between">' +
                 '<span><i class="mdi mdi-broadcast me-1"></i>Live Log</span>' +
                 '<span id="netbox-live-log-status" class="badge text-bg-secondary">Connecting&hellip;</span>' +
             '</h5>' +
             '<div id="netbox-live-log-scroll" class="table-responsive" style="max-height: 400px; overflow-y: auto;">' +
-                '<table class="table table-hover table-sm mb-0">' +
+                '<table class="table table-hover object-list mb-0">' +
                     '<thead>' +
                         '<tr>' +
-                            '<th scope="col" style="width: 4rem;">#</th>' +
-                            '<th scope="col" style="width: 2rem;"></th>' +
-                            '<th scope="col" style="width: 8rem;">Level</th>' +
+                            '<th scope="col">Line</th>' +
+                            '<th scope="col">Time</th>' +
+                            '<th scope="col">Level</th>' +
+                            '<th scope="col">Object</th>' +
                             '<th scope="col">Message</th>' +
                         '</tr>' +
                     '</thead>' +
@@ -137,14 +161,15 @@
         function appendRow(entry) {
             const level = (entry.level || "info").toLowerCase();
             const meta = LEVEL_META[level] || LEVEL_META.info;
+            const ts = typeof entry.timestamp === "number" ? formatTimestamp(entry.timestamp) : "";
             rowIndex += 1;
 
             const tr = document.createElement("tr");
-            tr.className = "script-log-entry";
             tr.innerHTML =
-                '<th scope="row">' + rowIndex + '</th>' +
-                '<td><i class="mdi ' + meta.icon + '"></i></td>' +
+                '<td>' + rowIndex + '</td>' +
+                '<td>' + escapeHtml(ts) + '</td>' +
                 '<td><span class="badge ' + meta.badge + '">' + meta.label + '</span></td>' +
+                '<td>&mdash;</td>' +
                 '<td>' + escapeHtml(entry.message || "") + '</td>';
             tbody.appendChild(tr);
 
