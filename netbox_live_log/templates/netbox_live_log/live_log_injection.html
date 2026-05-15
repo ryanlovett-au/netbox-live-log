@@ -9,14 +9,16 @@
     }
     window.__netbox_live_log_loaded = true;
 
-    // Level → Bootstrap badge mapping, matching NetBox's
-    // JOB_LOG_ENTRY_LEVELS in core/choices.py.
+    // Level → badge color mapping. These class names mirror NetBox's
+    // extras.choices.LogLevelChoices CHOICES tuple — using NetBox's own
+    // color tokens (teal/cyan/green/yellow/red), not Bootstrap's
+    // semantic ones (info/success/warning/danger).
     const LEVEL_META = {
-        debug:   { badge: "text-bg-secondary", label: "Debug" },
-        info:    { badge: "text-bg-info",      label: "Info" },
-        success: { badge: "text-bg-success",   label: "Success" },
-        warning: { badge: "text-bg-warning",   label: "Warning" },
-        failure: { badge: "text-bg-danger",    label: "Failure" }
+        debug:   { badge: "text-bg-teal",   label: "Debug" },
+        info:    { badge: "text-bg-cyan",   label: "Info" },
+        success: { badge: "text-bg-green",  label: "Success" },
+        warning: { badge: "text-bg-yellow", label: "Warning" },
+        failure: { badge: "text-bg-red",    label: "Failure" }
     };
 
     function escapeHtml(value) {
@@ -31,21 +33,20 @@
         });
     }
 
-    // Format a unix-epoch seconds float to match NetBox's DateTimeColumn
-    // output (timespec='milliseconds'): "YYYY-MM-DD HH:MM:SS.mmm".
+    // Format unix-epoch seconds to match the native Log table's
+    // rendering: "YYYY-MM-DD HH:MM:SS" (second precision).
     function formatTimestamp(epoch) {
         const d = new Date(epoch * 1000);
         if (isNaN(d.getTime())) {
             return "";
         }
-        const pad = (n, w) => String(n).padStart(w || 2, "0");
+        const pad = (n) => String(n).padStart(2, "0");
         return d.getFullYear() + "-" +
                pad(d.getMonth() + 1) + "-" +
                pad(d.getDate()) + " " +
                pad(d.getHours()) + ":" +
                pad(d.getMinutes()) + ":" +
-               pad(d.getSeconds()) + "." +
-               pad(d.getMilliseconds(), 3);
+               pad(d.getSeconds());
     }
 
     function init() {
@@ -165,10 +166,13 @@
             rowIndex += 1;
 
             const tr = document.createElement("tr");
+            // django-tables2 zebra-stripes rows with even/odd classes;
+            // the native log uses these, so match for visual parity.
+            tr.className = rowIndex % 2 === 0 ? "even" : "odd";
             tr.innerHTML =
                 '<td>' + rowIndex + '</td>' +
                 '<td>' + escapeHtml(ts) + '</td>' +
-                '<td><span class="badge ' + meta.badge + '">' + meta.label + '</span></td>' +
+                '<td><label class="badge ' + meta.badge + '">' + meta.label + '</label></td>' +
                 '<td>&mdash;</td>' +
                 '<td>' + escapeHtml(entry.message || "") + '</td>';
             tbody.appendChild(tr);
