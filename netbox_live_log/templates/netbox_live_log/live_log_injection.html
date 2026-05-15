@@ -1,3 +1,13 @@
+<style>
+/* Scoped to our card so it can't affect anything else on the page. */
+#netbox-live-log-card thead th {
+    /* NetBox wraps native log headers in <a> for sort behaviour, picking
+       up Tabler's body-color (gray-700, ~rgb(55, 65, 81)). Plain <th>
+       defaults to a muted gray-500. Use the Tabler variable so this
+       follows dark mode automatically. */
+    color: var(--tblr-body-color, rgb(55, 65, 81));
+}
+</style>
 <script type="text/javascript">
 (function () {
     "use strict";
